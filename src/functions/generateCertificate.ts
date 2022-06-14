@@ -5,6 +5,7 @@ import { join } from "path";
 import { readFileSync } from "fs";
 import dayjs from "dayjs";
 import chromium from "chrome-aws-lambda";
+import { S3 } from "aws-sdk";
 
 interface ICreateCertificate {
   id: string;
@@ -32,20 +33,6 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   // id, name, grade
   const { id, name, grade } = JSON.parse(event.body) as ICreateCertificate;
 
-  // insere dados na tabela criado em serverless.ts
-  // put nao retorna dados
-  await document
-    .put({
-      TableName: "users_certificate",
-      Item: {
-        id,
-        name,
-        grade,
-        created_at: new Date().getTime(),
-      },
-    })
-    .promise();
-
   // busca informação, sempre retorna um array dentro de Items
   const response = await document
     .query({
@@ -56,6 +43,24 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       },
     })
     .promise();
+
+  const userAlreadyExists = response.Items[0];
+
+  if (!userAlreadyExists) {
+    // insere dados na tabela criado em serverless.ts
+    // put nao retorna dados
+    await document
+      .put({
+        TableName: "users_certificate",
+        Item: {
+          id,
+          name,
+          grade,
+          created_at: new Date().getTime(),
+        },
+      })
+      .promise();
+  }
 
   const medalPath = join(process.cwd(), "src", "templates", "selo.png");
   const medal = readFileSync(medalPath, "base64");
@@ -74,25 +79,48 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     args: chromium.args,
     defaultViewport: chromium.defaultViewport,
     executablePath: "/usr/bin/google-chrome", //await chromium.executablePath,
-    headless: chromium.headless,
+    headless: true,
   });
 
   const page = await browser.newPage();
 
   await page.setContent(content);
 
-  await page.pdf({
+  const pdf = await page.pdf({
     format: "a4",
     landscape: true,
     printBackground: true,
     preferCSSPageSize: true,
-    // path: process.env.IS_OFFLINE ? "./certificate.pdf" : null,
+    path: process.env.IS_OFFLINE ? "./certificate.pdf" : null,
   });
 
   await browser.close();
 
+  const s3 = new S3();
+
+  // criando bucket pelo código
+  // await s3.createBucket({
+  //   Bucket: "NOME_DO_BUCKET",
+
+  // }).promise();
+
+  await s3
+    .putObject({
+      Bucket: "serverless-certificate-ignite-emerson",
+      Key: `${id}.pdf`,
+      ACL: "public-read",
+      Body: pdf,
+      ContentType: "application/pdf",
+    })
+    .promise();
+
   return {
     statusCode: 201,
-    body: JSON.stringify(response.Items[0]),
+    body: JSON.stringify(
+      {
+        message: "Certificado criado com sucesso!",
+        url: `https://serverless-certificate-ignite-emerson.s3.amazonaws.com/${id}.pdf`
+      }
+    ),
   };
 };
