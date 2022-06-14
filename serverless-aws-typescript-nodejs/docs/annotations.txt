@@ -1,0 +1,3 @@
+# generate aws key with IAM user with AllAccessPermission
+
+serverless config credentials --provider aws --key=ID_KEY_FROM_IAM --secret SECRET_KEY_FROM_IAM -o
